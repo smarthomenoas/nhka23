@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CI fix <ci@local>
+Date: Sat, 25 Oct 2025 00:00:00 +0000
+Subject: [PATCH] kernel: fix prefer_spread_on_idle call signature
+
+---
+ kernel/sched/fair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 0000000..0000000 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -4026,7 +4026,7 @@ static unsigned int adjust_cpus_for_packing(unsigned int *cpu_map, unsigned int
+                         best_idle_cpu = idle_cpumask_next(best_idle_cpu, cpu_present_mask);
+ 
+                 if (best_idle_cpu) {
+-                        if (prefer_spread_on_idle(*best_idle_cpu, false))
++                        if (prefer_spread_on_idle(*best_idle_cpu))
+                                 *cpu_map = cpumask_of(*best_idle_cpu);
+                 }
