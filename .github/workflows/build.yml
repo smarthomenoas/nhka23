@@ -1,4 +1,4 @@
-name: Build Nethunter A23 Kernel
+name: Build Nethunter A23 Kernel (Optimized)
 
 on:
   push:
@@ -37,40 +37,54 @@ jobs:
       - name: Prepare output directory
         run: mkdir -p "${OUT_DIR}"
 
-      - name: Fix prefer_spread_on_idle calls
+      - name: Patch prefer_spread_on_idle
         run: |
-          echo "Patching prefer_spread_on_idle calls to ensure 2 arguments..."
           sed -i -E 's/prefer_spread_on_idle\(([[:space:]]*[^,()]+)\)/prefer_spread_on_idle(\1, false)/g' kernel/sched/fair.c
-          echo "Diff after patch:"
           git --no-pager diff -- kernel/sched/fair.c || true
 
-      - name: Apply defconfig
+      - name: Apply DTBO fixes
         run: |
-          echo "Applying defconfig $DEFCONFIG"
-          make O=${OUT_DIR} $DEFCONFIG
+          chmod +x fix_dtbo.sh
+          ./fix_dtbo.sh
+
+      - name: Apply defconfig
+        run: make O=${OUT_DIR} $DEFCONFIG
 
       - name: Build kernel, dtbs, and modules
         run: |
+          set -e
+          echo "Building kernel..."
           make O=${OUT_DIR} -j$(nproc)
-          make O=${OUT_DIR} dtbs -j$(nproc) || true
+          echo "Building dtbs..."
+          make O=${OUT_DIR} dtbs -j$(nproc)
+          echo "Building modules..."
           make O=${OUT_DIR} modules -j$(nproc)
 
-      - name: Compress kernel Image
+      - name: Verify artifacts
         run: |
-          KIMG="${OUT_DIR}/arch/${ARCH}/boot/Image"
-          if [ -f "$KIMG" ]; then
-            gzip -9 -c "$KIMG" > "${OUT_DIR}/Image.gz"
-            echo "Image.gz created successfully"
+          IMAGE="${OUT_DIR}/arch/${ARCH}/boot/Image"
+          MODULES_TAR="${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz"
+
+          # Compress kernel
+          if [ -f "$IMAGE" ]; then
+            gzip -9 -c "$IMAGE" > "${OUT_DIR}/Image.gz"
+            echo "✅ Image.gz created"
           else
-            echo "No Image found at $KIMG"
+            echo "❌ ERROR: Kernel Image not found!"
+            exit 1
           fi
 
-      - name: Package modules
-        run: |
+          # Package modules
           TMP_MOD="${OUT_DIR}/modules_tmp"
-          mkdir -p "${TMP_MOD}"
-          make O=${OUT_DIR} modules_install INSTALL_MOD_PATH="${TMP_MOD}"
-          tar czf "${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz" -C "${TMP_MOD}" .
+          mkdir -p "$TMP_MOD"
+          make O=${OUT_DIR} modules_install INSTALL_MOD_PATH="$TMP_MOD"
+          tar czf "$MODULES_TAR" -C "$TMP_MOD" .
+          if [ -f "$MODULES_TAR" ]; then
+            echo "✅ Modules tar created"
+          else
+            echo "❌ ERROR: Modules tar not created!"
+            exit 1
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -83,3 +97,9 @@ jobs:
             ${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz
             ${OUT_DIR}/System.map
             ${OUT_DIR}/.config
+
+      - name: Build summary
+        run: |
+          echo "=== Build completed successfully ==="
+          echo "Artifacts available:"
+          ls -lh ${OUT_DIR} | grep -E 'Image.gz|modules_'
