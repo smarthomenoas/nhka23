@@ -1,0 +1,10 @@
+{
+  "name": "Nethunter A23 Kernel",
+  "image": "ubuntu:22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/ccache:1": {},
+    "ghcr.io/devcontainers/features/cross-build:1": {}
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y build-essential bison flex libncurses-dev bc python3 python3-pip ccache dwarves gcc-aarch64-linux-gnu crossbuild-essential-arm64 dtc make git && echo '✅ Dependencies installed'",
+  "remoteUser": "vscode"
+}
