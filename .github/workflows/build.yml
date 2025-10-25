@@ -10,9 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ARCH: arm64
-      # Cambia DEFCONFIG si en tu repo hay otro defconfig; si está vacío usará olddefconfig
       DEFCONFIG: a235m_defconfig
-      # Si prefieres usar un toolchain descargado, cambia esto y modifica build.sh
       CROSS_COMPILE: aarch64-linux-gnu-
       OUT_DIR: out
     steps:
@@ -28,10 +26,9 @@ jobs:
             python3 python3-pip ccache unzip dwarves \
             gcc-aarch64-linux-gnu crossbuild-essential-arm64 make
 
-      - name: Show kernel Makefile version (info)
+      - name: Show kernel Makefile version
         run: |
           if [ -f Makefile ]; then
-            echo "Makefile summary:"
             grep -m1 "^VERSION" Makefile || true
             grep -m1 "^PATCHLEVEL" Makefile || true
             grep -m1 "^SUBLEVEL" Makefile || true
@@ -39,30 +36,31 @@ jobs:
 
       - name: Prepare environment
         run: |
-          echo "OUT_DIR=${OUT_DIR}"
           mkdir -p "${OUT_DIR}"
 
-      - name: Make olddefconfig or defconfig
+      - name: Patch prefer_spread_on_idle call
         run: |
-          # If DEFCONFIG exists in repo, use it; otherwise try olddefconfig
+          echo "Aplicando fix prefer_spread_on_idle..."
+          git apply ./.github/patches/fix-prefer_spread.patch || echo "Patch already applied or failed"
+          sed -i -E 's/prefer_spread_on_idle\(([[:space:]]*[^,]+),[[:space:]]*false\)/prefer_spread_on_idle(\1)/g' kernel/sched/*.c || true
+          echo "Patch aplicado. Mostrando diff:"
+          git --no-pager diff -- kernel/sched || true
+
+      - name: Make defconfig / olddefconfig
+        run: |
           if [ -n "${DEFCONFIG}" ] && [ -f "arch/${ARCH}/configs/${DEFCONFIG}" ]; then
-            echo "Using repo defconfig: ${DEFCONFIG}"
             make O=${OUT_DIR} ${DEFCONFIG}
-          elif [ -f ".config" ]; then
-            echo "Using existing .config -> olddefconfig"
-            yes "" | make O=${OUT_DIR} olddefconfig || true
           else
-            echo "No defconfig found, try make O=${OUT_DIR} olddefconfig"
-            make O=${OUT_DIR} olddefconfig || true
+            yes "" | make O=${OUT_DIR} olddefconfig || true
           fi
 
-      - name: Build kernel (Image, dtbs) and modules
+      - name: Build kernel and modules
         env:
           ARCH: ${{ env.ARCH }}
           CROSS_COMPILE: ${{ env.CROSS_COMPILE }}
         run: |
           make O=${OUT_DIR} -j$(nproc)
-          make O=${OUT_DIR} dtbs -j$(nproc) || echo "dtbs may not be present for this tree"
+          make O=${OUT_DIR} dtbs -j$(nproc) || true
           make O=${OUT_DIR} modules -j$(nproc)
 
       - name: Compress kernel Image if exists
