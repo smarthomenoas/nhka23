@@ -1,15 +1,97 @@
-# desde la raíz del kernel
-make mrproper
-make clean
+name: Build Nethunter A23 Kernel
 
-# exportar variables si no las tienes
-export ARCH=arm64
-export SUBARCH=arm64
-export CROSS_COMPILE=aarch64-linux-gnu-
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-# Cargar tu defconfig previo (usa el que tengas; si generaste a235m_nethunter_defconfig, úsalo)
-make ARCH=arm64 a235m_nethunter_defconfig || true
-make ARCH=arm64 olddefconfig || true
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    env:
+      ARCH: arm64
+      # Cambia DEFCONFIG si en tu repo hay otro defconfig; si está vacío usará olddefconfig
+      DEFCONFIG: a235m_defconfig
+      # Si prefieres usar un toolchain descargado, cambia esto y modifica build.sh
+      CROSS_COMPILE: aarch64-linux-gnu-
+      OUT_DIR: out
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-# Ejecutar compilación (usa menos hilos si tu máquina no tiene RAM)
-make ARCH=arm64 -j$(nproc)
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git build-essential bison flex libncurses-dev bc \
+            python3 python3-pip ccache unzip dwarves \
+            gcc-aarch64-linux-gnu crossbuild-essential-arm64 make
+
+      - name: Show kernel Makefile version (info)
+        run: |
+          if [ -f Makefile ]; then
+            echo "Makefile summary:"
+            grep -m1 "^VERSION" Makefile || true
+            grep -m1 "^PATCHLEVEL" Makefile || true
+            grep -m1 "^SUBLEVEL" Makefile || true
+          fi
+
+      - name: Prepare environment
+        run: |
+          echo "OUT_DIR=${OUT_DIR}"
+          mkdir -p "${OUT_DIR}"
+
+      - name: Make olddefconfig or defconfig
+        run: |
+          # If DEFCONFIG exists in repo, use it; otherwise try olddefconfig
+          if [ -n "${DEFCONFIG}" ] && [ -f "arch/${ARCH}/configs/${DEFCONFIG}" ]; then
+            echo "Using repo defconfig: ${DEFCONFIG}"
+            make O=${OUT_DIR} ${DEFCONFIG}
+          elif [ -f ".config" ]; then
+            echo "Using existing .config -> olddefconfig"
+            yes "" | make O=${OUT_DIR} olddefconfig || true
+          else
+            echo "No defconfig found, try make O=${OUT_DIR} olddefconfig"
+            make O=${OUT_DIR} olddefconfig || true
+          fi
+
+      - name: Build kernel (Image, dtbs) and modules
+        env:
+          ARCH: ${{ env.ARCH }}
+          CROSS_COMPILE: ${{ env.CROSS_COMPILE }}
+        run: |
+          make O=${OUT_DIR} -j$(nproc)
+          make O=${OUT_DIR} dtbs -j$(nproc) || echo "dtbs may not be present for this tree"
+          make O=${OUT_DIR} modules -j$(nproc)
+
+      - name: Compress kernel Image if exists
+        run: |
+          KIMG="${OUT_DIR}/arch/${ARCH}/boot/Image"
+          if [ -f "$KIMG" ]; then
+            gzip -9 -c "$KIMG" > "${OUT_DIR}/Image.gz"
+            echo "Image.gz created"
+          else
+            echo "No Image found at $KIMG"
+          fi
+
+      - name: Package modules
+        run: |
+          MODDIR="${OUT_DIR}/lib/modules"
+          INSTALL_TMP="${OUT_DIR}/modules_tmp"
+          mkdir -p "${INSTALL_TMP}"
+          make O=${OUT_DIR} modules_install INSTALL_MOD_PATH="${INSTALL_TMP}"
+          cd "${INSTALL_TMP}" || exit 0
+          tar czf "${GITHUB_WORKSPACE}/${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz" .
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: |
+            ${OUT_DIR}/Image.gz
+            ${OUT_DIR}/arch/${ARCH}/boot/dts/**/*.dtb
+            ${OUT_DIR}/arch/${ARCH}/boot/dts/**/*.dtbo
+            ${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz
+            ${OUT_DIR}/System.map
+            ${OUT_DIR}/.config
