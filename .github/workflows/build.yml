@@ -13,6 +13,7 @@ jobs:
       DEFCONFIG: a235m_defconfig
       CROSS_COMPILE: aarch64-linux-gnu-
       OUT_DIR: out
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -26,35 +27,29 @@ jobs:
             python3 python3-pip ccache unzip dwarves \
             gcc-aarch64-linux-gnu crossbuild-essential-arm64 make
 
-      - name: Show kernel Makefile version
-        run: |
-          if [ -f Makefile ]; then
-            grep -m1 "^VERSION" Makefile || true
-            grep -m1 "^PATCHLEVEL" Makefile || true
-            grep -m1 "^SUBLEVEL" Makefile || true
-          fi
-
       - name: Prepare environment
         run: |
           mkdir -p "${OUT_DIR}"
 
-      - name: Patch prefer_spread_on_idle call
+      - name: Fix prefer_spread_on_idle calls
         run: |
-          echo "Aplicando fix prefer_spread_on_idle..."
-          git apply ./.github/patches/fix-prefer_spread.patch || echo "Patch already applied or failed"
-          sed -i -E 's/prefer_spread_on_idle\(([[:space:]]*[^,]+),[[:space:]]*false\)/prefer_spread_on_idle(\1)/g' kernel/sched/*.c || true
-          echo "Patch aplicado. Mostrando diff:"
+          echo "Reemplazando llamadas a prefer_spread_on_idle con dos argumentos..."
+          # Reemplazo global en todos los archivos .c del scheduler
+          sed -i -E 's/prefer_spread_on_idle\(([[:space:]]*[^,]+),[[:space:]]*false\)/prefer_spread_on_idle(\1)/g' kernel/sched/*.c
+          echo "Diferencias después del fix:"
           git --no-pager diff -- kernel/sched || true
 
-      - name: Make defconfig / olddefconfig
+      - name: Apply defconfig
         run: |
           if [ -n "${DEFCONFIG}" ] && [ -f "arch/${ARCH}/configs/${DEFCONFIG}" ]; then
+            echo "Usando defconfig ${DEFCONFIG}"
             make O=${OUT_DIR} ${DEFCONFIG}
           else
+            echo "Usando olddefconfig por defecto"
             yes "" | make O=${OUT_DIR} olddefconfig || true
           fi
 
-      - name: Build kernel and modules
+      - name: Build kernel, dtbs, and modules
         env:
           ARCH: ${{ env.ARCH }}
           CROSS_COMPILE: ${{ env.CROSS_COMPILE }}
@@ -63,24 +58,22 @@ jobs:
           make O=${OUT_DIR} dtbs -j$(nproc) || true
           make O=${OUT_DIR} modules -j$(nproc)
 
-      - name: Compress kernel Image if exists
+      - name: Compress kernel Image
         run: |
           KIMG="${OUT_DIR}/arch/${ARCH}/boot/Image"
           if [ -f "$KIMG" ]; then
             gzip -9 -c "$KIMG" > "${OUT_DIR}/Image.gz"
             echo "Image.gz created"
           else
-            echo "No Image found at $KIMG"
+            echo "No se encontró Image en $KIMG"
           fi
 
       - name: Package modules
         run: |
-          MODDIR="${OUT_DIR}/lib/modules"
           INSTALL_TMP="${OUT_DIR}/modules_tmp"
           mkdir -p "${INSTALL_TMP}"
           make O=${OUT_DIR} modules_install INSTALL_MOD_PATH="${INSTALL_TMP}"
-          cd "${INSTALL_TMP}" || exit 0
-          tar czf "${GITHUB_WORKSPACE}/${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz" .
+          tar czf "${OUT_DIR}/modules_${GITHUB_RUN_ID}.tar.gz" -C "${INSTALL_TMP}" .
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
