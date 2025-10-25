@@ -1,0 +1,15 @@
+# desde la raíz del kernel
+make mrproper
+make clean
+
+# exportar variables si no las tienes
+export ARCH=arm64
+export SUBARCH=arm64
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# Cargar tu defconfig previo (usa el que tengas; si generaste a235m_nethunter_defconfig, úsalo)
+make ARCH=arm64 a235m_nethunter_defconfig || true
+make ARCH=arm64 olddefconfig || true
+
+# Ejecutar compilación (usa menos hilos si tu máquina no tiene RAM)
+make ARCH=arm64 -j$(nproc)
